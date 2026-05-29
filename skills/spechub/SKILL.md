@@ -117,6 +117,8 @@ or help plan work. You'll use this exchange in two directions:
 - **Stage ID** — Optional. If present, include it as `stage_id` in the API
   body to reach the stage-specific agent. If absent, omit `stage_id` from
   the body to reach the project-level agent.
+- **Model** — Required. One of `fast`, `balanced`, or `frontier`. Send
+  exactly as provided in the `model_class` body field.
 
 ### Runbook
 
@@ -145,7 +147,7 @@ or help plan work. You'll use this exchange in two directions:
      "project_id": "{Project ID}",
      "stage_id": "{Stage ID}",
      "message": "<composed message>",
-     "model_class": "balanced"
+     "model_class": "{Model}"
    }
    ```
 
