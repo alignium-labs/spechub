@@ -119,8 +119,21 @@ or help plan work. You'll use this exchange in two directions:
   the body to reach the project-level agent.
 - **Model** — Required. One of `fast`, `balanced`, or `frontier`. Send
   exactly as provided in the `model_class` body field.
+- **Prompt** — Optional. If present, the planning agent has invoked you
+  with a specific task. Treat the body between the `---` delimiters as
+  instructions from the planning agent (not the user); do the work
+  locally, then post a single reply via agent-chat. See "Agent-invoked
+  flow" in the runbook below.
 
 ### Runbook
+
+This action has two flows. **Agent-invoked flow** (when `Prompt` is
+present in the parameter block): the planning agent asked the user to
+have you perform a specific task; do it and report back in a single
+reply. **User-driven flow** (no `Prompt`): the user is driving the
+conversation.
+
+#### User-driven flow (no Prompt)
 
 1. **Confirm readiness.** Tell the user you're ready to send messages to
    the SpecHub agent, and ask what they'd like to ask or share. Do not
@@ -135,6 +148,22 @@ or help plan work. You'll use this exchange in two directions:
      clearly framed message that attributes what comes from your local
      observation vs. the user's voice — for example, prefacing with
      "Local agent here, sharing context the user asked me to relay: …".
+
+#### Agent-invoked flow (Prompt present)
+
+1. **Read the prompt.** Treat the body between the `---` delimiters as a
+   request from the planning agent. The user is the intermediary —
+   they've already approved the invocation and handed it to you.
+
+2. **Do the work locally.** Run the necessary commands, read the
+   necessary files, gather the necessary observations. Stay within what
+   the prompt asks; this is a single-shot task, not a conversation.
+
+3. **Reply once.** Send a single agent-chat message summarizing what you
+   did and what you found. Frame it as a reply to the planning agent —
+   for example, prefacing with "Local agent here, responding to your
+   invocation: …". After this reply, the engagement is complete; do not
+   poll or initiate further exchanges unless the user asks.
 
 3. **Send the message:**
 
