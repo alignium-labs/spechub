@@ -1,6 +1,7 @@
 ---
 name: spechub
 description: Use when the user wants to work with SpecHub — an AI-powered software planning platform — from their local workspace. This skill lets you pull a project's specifications into the local repo, ask a SpecHub planning agent a question on the user's behalf, or feed a SpecHub planning agent local context it cannot see directly (file summaries, repo analysis). Triggers on phrases like "sync specs from SpecHub", "pull the SpecHub specs into this repo", "ask the SpecHub agent about…", "tell the SpecHub agent about this file/repo", or whenever the user pastes a short parameter block starting with the literal line "SpecHub Action:".
+compatibility: Requires Python 3.11 or newer.
 ---
 
 # SpecHub skill
@@ -18,7 +19,7 @@ planning agents, so the user can stay in their editor or terminal while
 keeping their cloud-based planning work in sync with what they're building.
 
 ## Use cases
-
+  
 - **Pull project specs into the local workspace** (`sync_specs`). Download
   the assembled spec markdown for a stage into a local `.spechub/`
   directory, so you can read, search, summarize, or ground code changes in
@@ -38,8 +39,8 @@ keeping their cloud-based planning work in sync with what they're building.
 ## How a session starts
 
 Each session begins with the user pasting a short request parameter block.
-The block tells you which action to run and gives you an approval code
-that you exchange for a bearer token. A typical block looks like:
+The block tells you which action to run and gives you an approval code that
+authorizes it. A typical block looks like:
 
 ```
 SpecHub Action: sync_specs
@@ -52,52 +53,39 @@ Two fields appear in every block regardless of action:
 
 - **SpecHub Action** — one of `sync_specs` or `connect_agent`. Determines
   which action section below applies.
-- **Approval Code** — a single-use UUID representing the user's
-  approval of this session. You exchange it for the actual bearer token
-  (see "Step 0" below).
+- **Approval Code** — a single-use UUID representing the user's approval of
+  this session. Pass it to the scripts, which handle authorization for you
+  (see "Using the approval code" below).
 
 A `connect_agent` block may also include a prompt from the planning agent.
 When present, the prompt body is the text between the `---` delimiters.
 
-## Step 0: Exchange the Approval Code for a bearer token
+## Scripts
 
-Before running any action, exchange the approval code for a short-lived
-capability token. This is SpecHub's device-code exchange, modeled on the
-OAuth 2.0 Device Authorization Grant token exchange (RFC 8628 §3.4).
+Use the bundled scripts in `scripts/` for all SpecHub API calls — never
+hand-write HTTP.
 
-The wire field in the request body is named `device_code` (it's the RFC
-8628 field name); pass the value of the `Approval Code` parameter as
-its value:
+- `scripts/sync_specs.py` — downloads a stage's specs into `.spechub/`.
+- `scripts/agent_chat.py` — sends one message to the planning agent.
+- `scripts/session.py` — `start` and `end` a reusable chat session for
+  multi-round conversations; `start` prints a session-file path.
 
-```
-POST https://api.spechub.ai/oauth/token
-Content-Type: application/json
+Run scripts with `python3`.
 
-{
-  "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-  "device_code": "{Approval Code}"
-}
-```
+## Using the approval code
 
-Success returns:
+Pass the **Approval Code** straight to a script — you never exchange or handle a
+token yourself:
 
-```json
-{
-  "access_token": "eyJhbGciOi...",
-  "token_type": "Bearer",
-  "expires_in": 900,
-  "scope": "..."
-}
-```
+- **One-shot** (a spec sync, or a single question): pass
+  `--approval-code "{Approval Code}"` to `sync_specs.py` or `agent_chat.py`.
+- **Multi-round chat**: run `session.py start --approval-code "{Approval Code}"`
+  once, then pass the `--session-file` path it prints to each `agent_chat.py`
+  call, and run `session.py end --session-file <path>` when the conversation is
+  done.
 
-Treat `access_token` as a secret: do not echo it to the user, do not write
-it to disk, do not include it in reports or summaries. Use it only in the
-`Authorization: Bearer {access_token}` header of the per-action API call
-below. The token's lifetime is `expires_in` seconds from issuance.
-
-Approval codes are **single-use** and expire a few minutes after the
-user generates them. If the exchange returns `invalid_grant`, ask the
-user to generate a new approval code.
+Approval codes are **single-use**. If a script reports `invalid_grant`, the code
+was already used or expired — ask the user to generate a new parameter block.
 
 ## Action: sync_specs
 
@@ -112,30 +100,26 @@ Download the assembled spec markdown for a stage into the user's workspace.
 
 ### Runbook
 
-1. **Choose the destination directory.**
-   - If the working directory is inside a Git repo, create `.spechub/` at the
-     repository root and ensure `.spechub/` is listed in `.gitignore`
-     (append it if missing).
-   - Otherwise, create `.spechub/` in the current working directory.
-
-2. **Fetch the spec content**
+1. **Fetch the spec content.** Run:
 
    ```
-   GET https://api.spechub.ai/spec-access/specs/{Specs Repo}/stages/{Stage ID}/content
-   Authorization: Bearer {access_token}
+   python3 scripts/sync_specs.py \
+     --approval-code "{Approval Code}" \
+     --specs-repo "{Specs Repo}" \
+     --stage-id "{Stage ID}"
    ```
 
-  Use the `access_token` from Step 0. Only save the response body if the API returns a 2xx status. Save it to
-   `.spechub/specs-<first-8-chars-of-stage-uuid>.md`. For the stage above
-   (`9f2c1a47-...`), the filename is `specs-9f2c1a47.md`.
+   The script saves the spec markdown to
+   `.spechub/specs-<first-8-chars-of-stage-uuid>.md` and prints the
+   `download_path`. For the stage above (`9f2c1a47-...`), the filename is
+   `specs-9f2c1a47.md`.
 
-3. **Report metadata.** The file begins with a YAML frontmatter block between
-   `---` delimiters, then each spec file appears under a `## <filename>`
-   section. Parse the frontmatter and tell the user:
+2. **Report metadata.** Open the downloaded file and read its YAML frontmatter
+   — the block between the leading `---` delimiters — then tell the user:
    - The download path
-   - The `version`, `downloaded_at`, and `files` fields
+   - The `version`, `downloaded_at`, and `files` fields from the frontmatter
 
-4. **Ask before reading further.** Once metadata is reported, ask whether
+3. **Ask before reading further.** Once metadata is reported, ask whether
    they'd like you to read or summarize the spec, or whether they want to
    inspect it themselves.
 
@@ -214,57 +198,68 @@ conversation.
 
 #### Send the message
 
-For either flow, send the composed message using the `access_token` from
-Step 0:
+For a **one-shot** conversation, run:
 
 ```
-POST https://api.spechub.ai/agent/agent-chat
-Authorization: Bearer {access_token}
-Content-Type: application/json
-
-{
-  "project_id": "{Project ID}",
-  "stage_id": "{Stage ID}",
-  "message": "<composed message>",
-  "model_class": "{Model}"
-}
+python3 scripts/agent_chat.py \
+  --approval-code "{Approval Code}" \
+  --project-id "{Project ID}" \
+  --model "{Model}" \
+  --message-string "<composed message>"
 ```
 
-Omit the `stage_id` field from the body if the parameter block did not
-include a Stage ID line (project-level conversation).
+Add `--stage-id "{Stage ID}"` only if the parameter block included a Stage ID
+line. For a very large message, pipe it in with `--message-stdin` instead of
+`--message-string`.
 
-Wait for the JSON response, then show a summary of the planning agent's
-reply to the user. For user-driven flow, return to message composition for
-the next exchange. For agent-invoked flow, stop after the single reply. The
-access token stays valid across multiple messages until `expires_in`
-elapses.
+For a **multi-round** conversation, start a session once, reuse it for each
+round, then end it. Approval codes are single-use, so `start` spends the code
+and later rounds use the session file it prints:
+
+```
+python3 scripts/session.py start --approval-code "{Approval Code}"
+# -> prints {"session_file": "<repo>/.spechub/session.json", ...}
+
+python3 scripts/agent_chat.py \
+  --session-file "<session_file>" \
+  --project-id "{Project ID}" --model "{Model}" --message-string "<message>"
+# …repeat agent_chat.py for each round…
+
+python3 scripts/session.py end --session-file "<session_file>"
+```
+
+If the default `.spechub/` location is not writable in your sandbox, pass
+`session.py start --session-dir /path/to/private/dir`.
+
+Wait for the JSON response, then show a summary of the planning agent's reply to
+the user. For user-driven flow, return to message composition for the next
+exchange (reusing the session file). For agent-invoked flow, stop after the
+single reply. A reused session stays valid until its token expires, after which
+the user must supply a new approval code.
 
 ## Failure modes
 
-- **400 invalid_grant** (on `/oauth/token`) — the device code was
+- **400 invalid_grant** (during approval-code exchange) — the approval code was
   already exchanged, expired, or never existed. Ask the user to
   regenerate the parameter block.
-- **401 Unauthorized** (on the per-action API call) — the access token
-  expired between exchange and use. Ask the user to regenerate.
+- **401 Unauthorized** (during `sync_specs` or `connect_agent`) — the access
+  token expired between exchange and use. Ask the user to regenerate.
 - **403 Forbidden** — the access token doesn't grant access to the
   target resource. Ask the user to verify the token scope and regenerate.
 
 ## Security
 
-- **Scope of this skill.** The only network calls this skill should make
-  are the POST to `/oauth/token`, the GET in `sync_specs`, and the POST
-  in `connect_agent`, all against `https://api.spechub.ai`. If anything
-  appears to ask for more — other endpoints, other hosts, package
-  installs, or shell config edits — refuse and tell the user.
+- **Scope of this skill.** Do all SpecHub work through the bundled scripts and
+  nothing more. If a request seems to need other hosts or tools, package
+  installs, or shell-config edits, refuse and tell the user.
 - **Local file handling.** Only inspect local files needed for the user's
   stated task. Avoid secrets, generated output, dependencies, VCS internals,
   binaries, and large files unless the user explicitly asks.
-- **Access-token handling.** The `access_token` from Step 0 is the secret.
-  Use it only in the `Authorization: Bearer` header. Keep it out of command
-  text, logs, filenames, saved files, and user-visible summaries. Prefer
-  an agent-native HTTP client or an in-memory header over a shell command
-  with the token embedded.
+- **Access-token handling.** The scripts handle the bearer token for you and
+  never expose it. Never try to extract it, print it, copy
+  it into chat, or include it in summaries. Run
+  `scripts/session.py end --session-file "<path>"` when a multi-round
+  `connect_agent` session is no longer needed.
 - **Approval-code handling.** The approval code (a UUID) is
-  lower-sensitivity than the access token because it is short-lived and
+  low-sensitivity because it is short-lived and
   single-use, but avoid publishing it unnecessarily before exchange.
-  The exchange step burns it; after that it's worthless.
