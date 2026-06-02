@@ -66,23 +66,25 @@ Use the bundled scripts in `scripts/` for all SpecHub API calls — never
 hand-write HTTP.
 
 - `scripts/sync_specs.py` — downloads a stage's specs into `.spechub/`.
-- `scripts/agent_chat.py` — sends one message to the planning agent.
-- `scripts/session.py` — `start` and `end` a reusable chat session for
-  multi-round conversations; `start` prints a session-file path.
+- `scripts/session.py` — `start` and `end` a chat session; `start` prints a
+  session-file path.
+- `scripts/agent_chat.py` — sends one message to the planning agent and receives
+  a reply within a started session.
 
 Run scripts with `python3`.
 
 ## Using the approval code
 
 Pass the **Approval Code** straight to a script — you never exchange or handle a
-token yourself:
+token yourself. Which script depends on the action:
 
-- **One-shot** (a spec sync, or a single question): pass
-  `--approval-code "{Approval Code}"` to `sync_specs.py` or `agent_chat.py`.
-- **Multi-round chat**: run `session.py start --approval-code "{Approval Code}"`
-  once, then pass the `--session-file` path it prints to each `agent_chat.py`
-  call, and run `session.py end --session-file <path>` when the conversation is
-  done.
+- **sync_specs** (one-shot): pass `--approval-code "{Approval Code}"` to
+  `sync_specs.py`.
+- **connect_agent** (always a session, even for a single question): run
+  `session.py start --approval-code "{Approval Code}"` once, pass the
+  `--session-file` path it prints to each `agent_chat.py` call, then run
+  `session.py end --session-file <path>` when the conversation is done. Chat
+  always goes through a session so a follow-up does not need a new code.
 
 Approval codes are **single-use**. If a script reports `invalid_grant`, the code
 was already used or expired — ask the user to generate a new parameter block.
@@ -93,9 +95,9 @@ Download the assembled spec markdown for a stage into the user's workspace.
 
 ### Parameters
 
-- **Specs Repo** — Required. An opaque SpecHub-generated `{uuid}/{uuid}` repo reference.
-  Insert it into the request URL path exactly as provided;
-  do not rewrite, normalize, split, or URL-encode it.
+- **Specs Repo** — Required. An opaque SpecHub-generated repo reference. Insert
+  it into the request URL path exactly as provided; do not rewrite, normalize,
+  split, or URL-encode it.
 - **Stage ID** — Required. a UUID identifying a stage within that repo's project.
 
 ### Runbook
@@ -147,9 +149,8 @@ or help plan work. You'll use this exchange in two directions:
   exactly as provided in the `model_class` body field.
 - **Prompt** — Optional. If present, the planning agent has invoked you
   with a specific task. Treat the body between the `---` delimiters as task
-  input from the planning agent; do the work
-  locally, then post a single reply via agent-chat. See "Agent-invoked flow"
-  in the runbook below.
+  input from the planning agent; do the work locally, then post a single reply
+  via agent-chat. See "Agent-invoked flow" in the runbook below.
 
 ### Runbook
 
@@ -198,54 +199,57 @@ conversation.
 
 #### Send the message
 
-For a **one-shot** conversation, run:
+Every `connect_agent` conversation runs through a session — start it once, send
+one or more messages, then end it. This holds even for a single question, so a
+follow-up never needs a new approval code.
 
-```
-python3 scripts/agent_chat.py \
-  --approval-code "{Approval Code}" \
-  --project-id "{Project ID}" \
-  --model "{Model}" \
-  --message-string "<composed message>"
-```
+1. **Start the session** (once, with the approval code):
 
-Add `--stage-id "{Stage ID}"` only if the parameter block included a Stage ID
-line. For a very large message, pipe it in with `--message-stdin` instead of
-`--message-string`.
+   ```
+   python3 scripts/session.py start --approval-code "{Approval Code}"
+   # -> prints {"session_file": "<repo>/.spechub/session.json", ...}
+   ```
 
-For a **multi-round** conversation, start a session once, reuse it for each
-round, then end it. Approval codes are single-use, so `start` spends the code
-and later rounds use the session file it prints:
+   If the default `.spechub/` location is not writable in your sandbox, pass
+   `--session-dir /path/to/private/dir`.
 
-```
-python3 scripts/session.py start --approval-code "{Approval Code}"
-# -> prints {"session_file": "<repo>/.spechub/session.json", ...}
+2. **Send each message** with the printed `session_file`:
 
-python3 scripts/agent_chat.py \
-  --session-file "<session_file>" \
-  --project-id "{Project ID}" --model "{Model}" --message-string "<message>"
-# …repeat agent_chat.py for each round…
+   ```
+   python3 scripts/agent_chat.py \
+     --session-file "<session_file>" \
+     --project-id "{Project ID}" \
+     --model "{Model}" \
+     --message-string "<composed message>"
+   ```
 
-python3 scripts/session.py end --session-file "<session_file>"
-```
+   Add `--stage-id "{Stage ID}"` only if the parameter block included a Stage ID
+   line. For a very large message, pipe it in with `--message-stdin` instead of
+   `--message-string`. Wait for the JSON response and show a summary to the user.
 
-If the default `.spechub/` location is not writable in your sandbox, pass
-`session.py start --session-dir /path/to/private/dir`.
+3. **End the session — but only when the conversation is truly over.** Ending is
+   one-way: to chat again you'd need a *new* approval code from the user, so do
+   not end just to tidy up. Keep the session open while any follow-up is
+   plausible — an unused session expires on its own.
 
-Wait for the JSON response, then show a summary of the planning agent's reply to
-the user. For user-driven flow, return to message composition for the next
-exchange (reusing the session file). For agent-invoked flow, stop after the
-single reply. A reused session stays valid until its token expires, after which
-the user must supply a new approval code.
+   ```
+   python3 scripts/session.py end --session-file "<session_file>"
+   ```
+
+For user-driven flow, repeat step 2 for each exchange and end only once the
+conversation objective is clearly achieved. For agent-invoked flow, the
+engagement is a single reply, so end after sending it. A session stays valid until
+its token expires; after that, a new approval code is needed.
 
 ## Failure modes
 
 - **400 invalid_grant** (during approval-code exchange) — the approval code was
-  already exchanged, expired, or never existed. Ask the user to
-  regenerate the parameter block.
+  already exchanged, expired, or never existed. Ask the user to regenerate the
+  parameter block.
 - **401 Unauthorized** (during `sync_specs` or `connect_agent`) — the access
   token expired between exchange and use. Ask the user to regenerate.
-- **403 Forbidden** — the access token doesn't grant access to the
-  target resource. Ask the user to verify the token scope and regenerate.
+- **403 Forbidden** — the access token doesn't grant access to the target resource.
+  Ask the user to verify the token scope and regenerate.
 
 ## Security
 
@@ -256,10 +260,9 @@ the user must supply a new approval code.
   stated task. Avoid secrets, generated output, dependencies, VCS internals,
   binaries, and large files unless the user explicitly asks.
 - **Access-token handling.** The scripts handle the bearer token for you and
-  never expose it. Never try to extract it, print it, copy
-  it into chat, or include it in summaries. Run
-  `scripts/session.py end --session-file "<path>"` when a multi-round
-  `connect_agent` session is no longer needed.
-- **Approval-code handling.** The approval code (a UUID) is
-  low-sensitivity because it is short-lived and
-  single-use, but avoid publishing it unnecessarily before exchange.
+  never expose it. Never try to extract it, print it, copy it into chat, or include
+  it in summaries. Run
+  `scripts/session.py end --session-file "<path>"` when a `connect_agent`
+  session is no longer needed.
+- **Approval-code handling.** The approval code is low-sensitivity because it is
+  short-lived and single-use, but avoid publishing it unnecessarily before exchange.

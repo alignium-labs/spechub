@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Send one message to a SpecHub planning agent.
 
-Stateless. Two mutually-exclusive credential inputs:
-  --approval-code   one-shot: exchange in memory, send, exit (the default).
-  --session-file    reuse a session started by session.py for multi-round chat.
+Reads the bearer token from a session file created by `session.py start`, so
+every chat belongs to an explicit session and can run more rounds. Writes
+nothing itself.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ import argparse
 import sys
 from pathlib import Path
 
-from api import exchange_device_code
 from api import send_agent_message
 from common import SpecHubError
 from common import fail
@@ -30,18 +29,9 @@ def read_message(args: argparse.Namespace) -> str:
     return message
 
 
-def resolve_token(args: argparse.Namespace) -> str:
-    """Return the bearer token from either a session file or a fresh exchange."""
-    if args.session_file:
-        return session_token(read_session(Path(args.session_file).expanduser()))
-    return exchange_device_code(args.approval_code, timeout=args.timeout)[
-        "access_token"
-    ]
-
-
 def run(args: argparse.Namespace) -> int:
-    """Resolve the token, send one message, and print the reply."""
-    token = resolve_token(args)
+    """Read the session token, send one message, and print the reply."""
+    token = session_token(read_session(Path(args.session_file).expanduser()))
     reply = send_agent_message(
         token,
         project_id=args.project_id,
@@ -69,14 +59,10 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("fast", "balanced", "frontier"),
         help="Model class.",
     )
-
-    credential = parser.add_mutually_exclusive_group(required=True)
-    credential.add_argument(
-        "--approval-code", help="Single-use approval code (one-shot message)."
-    )
-    credential.add_argument(
+    parser.add_argument(
         "--session-file",
-        help="Session file from 'session.py start' (multi-round chat).",
+        required=True,
+        help="Session file from 'session.py start'.",
     )
 
     message = parser.add_mutually_exclusive_group(required=True)
