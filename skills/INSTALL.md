@@ -10,9 +10,12 @@ npx skills add https://github.com/alignium-labs/spechub/tree/main/skills/spechub
 
 See the [`npx skills` documentation](https://github.com/vercel-labs/skills/blob/main/README.md) for reference.
 
-With `gh` (2.90.0 or later):
+With `gh`:
 
 ```bash
+# Check version first - must be 2.90.0 or newer
+gh --version
+
 gh skill install alignium-labs/spechub skills/spechub
 ```
 
